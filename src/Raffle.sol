@@ -113,9 +113,9 @@ contract Raffle is VRFConsumerBaseV2Plus {
         emit EnteredRaffle(msg.sender);
     }
 
-    // 1. Generate a random number
-    // 2. Use the random number to pick a winning player
-    // 3. Be automatically called
+    // 1. Generate a random number; done
+    // 2. Use the random number to pick a winning player; done
+    // 3. Be automatically called; remaining
     function pickWinner() external {
         if ((block.timestamp - s_lastTimeStamp) > i_interval) {
             revert Raffle__LotteryTimePending();
@@ -134,8 +134,13 @@ contract Raffle is VRFConsumerBaseV2Plus {
         uint256 requestId = s_vrfCoordinator.requestRandomWords(request);
     }
 
-    // in the abstract contract inherited from VRFConsumerBaseV2Plus, we have to implement the fulfillRandomWords function using the override keyword as it was declared virtual in the parent contract. virtusal keyword specifies that the function needs to be overwritten.
+    /// @notice in the abstract contract inherited from VRFConsumerBaseV2Plus, we have to implement the fulfillRandomWords function using the override keyword as it was declared virtual in the parent contract. virtusal keyword specifies that the  function needs to be overwritten.
+    /// @notice CEI: Checks, Effects, Interactions pattern
     function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal override {
+        // Checks
+        //requires, conditions, etc.
+
+        //Effects (Internal Contract State)
         uint256 indexOfWinner = randomWords[0] % s_players.length;
         address payable recentWinner = s_players[indexOfWinner];
         s_recentWinner = recentWinner;
@@ -143,13 +148,13 @@ contract Raffle is VRFConsumerBaseV2Plus {
         s_raffleState = RaffleState.OPEN;
         s_players = new address payable[](0);
         s_lastTimeStamp = block.timestamp;
+        emit WinnerPicked(s_recentWinner); // technically works internally, thus, bumped up to effects instead of interactions
 
+        // Interactions (External Contract Interactions)
         (bool success,) = recentWinner.call{value: address(this).balance}("");
         if(!success) {
             revert Raffle__FundsFailedToTransfer();
         }
-
-        emit WinnerPicked(s_recentWinner);
     }
 
     /**
