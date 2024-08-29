@@ -38,16 +38,17 @@ contract Raffle is VRFConsumerBaseV2Plus {
      * @notice add a prefix of the contract name to the error name so that users can identify where the revert came from
      */
     error Raffle__SendMoreToEnterRaffle();
-    error Raffle__LotteryTimePending();
     error Raffle__FundsFailedToTransfer();
     error Raffle__NotOpen();
+    error Raffle__UpkeepNotNeeded(uint256 balance, uint256 playersLength, uint256 raffleState);
 
     /**
      * TYPE DECLARATIONS
      */
     enum RaffleState {
-        OPEN,
-        CALCULATING
+        OPEN, // 0
+        CALCULATING // 1
+
     }
 
     /**
@@ -102,7 +103,7 @@ contract Raffle is VRFConsumerBaseV2Plus {
         if (msg.value < i_entranceFee) {
             revert Raffle__SendMoreToEnterRaffle();
         }
-        if(s_raffleState != RaffleState.OPEN) {
+        if (s_raffleState != RaffleState.OPEN) {
             revert Raffle__NotOpen();
         }
         // 0.8.26 introduces including custom errors in the require statements as: require(msg.value >= i_entranceFee, SendMoreToEnterRaffle()); BUT this is not as gas efficient as using the statement above
@@ -113,12 +114,41 @@ contract Raffle is VRFConsumerBaseV2Plus {
         emit EnteredRaffle(msg.sender);
     }
 
+    //@note when should the winner be picked?
+    // defining the variable identifier in the returns part also initializes the variable,
+    // so you don't have to define and initialize upkeepNeeded here, defaults to false
+    /**
+     * @dev This is the function that the chainlink nodes will call to see
+     * if the lottery is ready to have a winner picked.
+     * The following should be true in order for upkeepNeeded to be true:
+     * 1. The time interval has passed between raffle runs
+     * 2. The lottery is open
+     * 3. The contract has ETH
+     * 4. Implicitly, your subscription has LINK
+     * @param - ignored
+     * @return upkeepNeeded - true if it's time to restart the lottery
+     * @return - ignored
+     */
+    function checkUpkeep(bytes memory /* checkData */ )
+        public
+        view
+        returns (bool upkeepNeeded, bytes memory /* performData*/ )
+    {
+        bool timeHasPassed = ((block.timestamp - s_lastTimeStamp) >= i_interval);
+        bool isOpen = s_raffleState == RaffleState.OPEN;
+        bool hasBalance = address(this).balance > 0;
+        bool hasPlayers = s_players.length > 0;
+        upkeepNeeded = timeHasPassed && isOpen && hasBalance && hasPlayers;
+        return (upkeepNeeded, "");
+    }
+
     // 1. Generate a random number; done
     // 2. Use the random number to pick a winning player; done
     // 3. Be automatically called; remaining
-    function pickWinner() external {
-        if ((block.timestamp - s_lastTimeStamp) > i_interval) {
-            revert Raffle__LotteryTimePending();
+    function performUpkeep(bytes calldata /* performData */ ) external {
+        (bool upkeepNeeded,) = checkUpkeep("");
+        if (!upkeepNeeded) {
+            revert Raffle__UpkeepNotNeeded(address(this).balance, s_players.length, uint256(s_raffleState));
         }
 
         s_raffleState = RaffleState.CALCULATING;
@@ -131,12 +161,16 @@ contract Raffle is VRFConsumerBaseV2Plus {
             numWords: NUM_WORDS,
             extraArgs: VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment: false}))
         });
-        uint256 requestId = s_vrfCoordinator.requestRandomWords(request);
+        s_vrfCoordinator.requestRandomWords(request);
     }
 
-    /// @notice in the abstract contract inherited from VRFConsumerBaseV2Plus, we have to implement the fulfillRandomWords function using the override keyword as it was declared virtual in the parent contract. virtusal keyword specifies that the  function needs to be overwritten.
-    /// @notice CEI: Checks, Effects, Interactions pattern
-    function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal override {
+    /**
+     * @dev in the abstract contract inherited from VRFConsumerBaseV2Plus, we have to implement the fulfillRandomWords
+     * function using the override keyword as it was declared virtual in the parent contract. virtusal keyword
+     * specifies that the  function needs to be overwritten.
+     * @notice CEI: Checks, Effects, Interactions pattern
+     */
+    function fulfillRandomWords(uint256, /*requestId*/ uint256[] calldata randomWords) internal override {
         // Checks
         //requires, conditions, etc.
 
@@ -152,7 +186,7 @@ contract Raffle is VRFConsumerBaseV2Plus {
 
         // Interactions (External Contract Interactions)
         (bool success,) = recentWinner.call{value: address(this).balance}("");
-        if(!success) {
+        if (!success) {
             revert Raffle__FundsFailedToTransfer();
         }
     }
